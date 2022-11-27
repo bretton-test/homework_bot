@@ -128,7 +128,6 @@ def main():
             response = get_api_answer(timestamp)
             if bool(response):
                 check_response(response)
-
                 homeworks = response.get(HOMEWORK_KEY)
                 timestamp = response.get(TIME_KEY)
                 if bool(homeworks):
