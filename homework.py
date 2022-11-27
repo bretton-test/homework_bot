@@ -4,9 +4,6 @@ import time
 import requests
 import telegram
 
-from exceptions import EnvironmentValueError, HttpStatusError, BotHandler
-from constants import PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
-from constants import TIMEOUT, RETRY_PERIOD, ENDPOINT, HEADERS
 from constants import (
     HOMEWORK_KEY,
     TIME_KEY,
@@ -15,6 +12,9 @@ from constants import (
     HOMEWORK_VERDICTS,
     HOMEWORK_KEYS,
 )
+from constants import PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+from constants import TIMEOUT, RETRY_PERIOD, ENDPOINT, HEADERS
+from exceptions import EnvironmentValueError, HttpStatusError, BotHandler
 
 error_messages = {}
 
@@ -99,8 +99,10 @@ def parse_status(homework):
         raise ValueError('Api возвращает недокументированный статус')
     homework_name = homework.get(HOMEWORK_NAME_KEY)
     if not bool(homework_name):
-        raise ValueError(f'в ответе API домашки нет ключа "{HOMEWORK_NAME_KEY}" ')
-    return f'Изменился статус проверки работы "{homework_name}".  {verdict}'
+        raise ValueError(
+            f'в ответе API домашки нет ключа "{HOMEWORK_NAME_KEY}" '
+        )
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def send_error_message(bot):
@@ -118,7 +120,6 @@ def send_error_message(bot):
 
 def main():
     """Основная логика работы бота."""
-
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time()) - RETRY_PERIOD
     check_tokens()
