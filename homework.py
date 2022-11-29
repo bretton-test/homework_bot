@@ -1,4 +1,5 @@
 import logging
+import string
 import time
 
 import requests
@@ -13,7 +14,8 @@ from constants import (
     HOMEWORK_KEYS,
 )
 from constants import PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
-from constants import TIMEOUT, RETRY_PERIOD, ENDPOINT, HEADERS
+from constants import TELEGRAM_RETRY_PERIOD as RETRY_PERIOD
+from constants import TIMEOUT, ENDPOINT, HEADERS
 from exceptions import EnvironmentValueError, HttpStatusError, BotHandler
 
 error_messages = {}
@@ -28,21 +30,21 @@ logger.addHandler(handler)
 
 def check_tokens():
     """Check tokens for validity."""
-    if not bool(PRACTICUM_TOKEN):
+    missing_tokens = []
+    for item in (
+        (PRACTICUM_TOKEN, 'PRACTICUM_TOKEN'),
+        (TELEGRAM_TOKEN, 'TELEGRAM_TOKEN'),
+        (TELEGRAM_CHAT_ID, 'TELEGRAM_CHAT_ID'),
+    ):
+        if not item[0]:
+            missing_tokens.append(item[1])
+    error_message = ", ".join(missing_tokens)
+    if error_message:
         logger.critical(
-            'Отсутствует обязательная переменная окружения: PRACTICUM_TOKEN'
+            f'Отсутствует обязательная'
+            f' переменная окружения: {error_message}'
         )
-        raise EnvironmentValueError('PRACTICUM_TOKEN')
-    if not bool(TELEGRAM_TOKEN):
-        logger.critical(
-            'Отсутствует обязательная переменная окружения: TELEGRAM_TOKEN'
-        )
-        raise EnvironmentValueError('TELEGRAM_TOKEN')
-    if not bool(TELEGRAM_CHAT_ID):
-        logger.critical(
-            'Отсутствует обязательная переменная окружения: TELEGRAM_CHAT_ID'
-        )
-        raise EnvironmentValueError('TELEGRAM_CHAT_ID')
+    return error_message
 
 
 def send_message(bot, message):
@@ -77,28 +79,36 @@ def get_api_answer(timestamp):
 
 def check_response(response):
     """Проверка ответа API домашки."""
+    error_message = 'API возвращает неверный тип данных'
     if not isinstance(response, dict):
-        raise TypeError('API возвращает неверный тип данных')
-    answer = response.get(HOMEWORK_KEY)
-    if not isinstance(answer, list):
-        raise TypeError('API возвращает неверный тип данных')
-    for item in answer:
+        raise TypeError(f'{error_message}. {type(response)}: ожидаемый dict!')
+    homeworks = response.get(HOMEWORK_KEY)
+    timestamp = response.get(TIME_KEY)
+    if not isinstance(homeworks, list):
+        raise TypeError(f'{error_message}. {type(homeworks)}: ожидаемый list!')
+    if not isinstance(timestamp, int):
+        raise TypeError(f'{error_message}. {type(timestamp)}: ожидаемый int!')
+    # хотел сделать в цикле. но pytest не пропустил
+
+    for item in homeworks:
         for key in HOMEWORK_KEYS:
             value = item.get(key)
-            if not bool(value):
-                raise ValueError(f'пустое значение параметра {key}')
+            if not isinstance(value, str):
+                raise TypeError(
+                    f'{error_message}. {type(value)}: ожидаемый str!'
+                )
 
 
 def parse_status(homework):
     """Возвращает ответ из словаря домашки."""
     status = homework.get(STATUS_KEY)
-    if not bool(status):
-        raise ValueError('Api не возвращает статус')
+    if not status:
+        raise ValueError('Api возвращает недокументированный статус')
     verdict = HOMEWORK_VERDICTS.get(status)
-    if not bool(verdict):
+    if not verdict:
         raise ValueError('Api возвращает недокументированный статус')
     homework_name = homework.get(HOMEWORK_NAME_KEY)
-    if not bool(homework_name):
+    if not homework_name:
         raise ValueError(
             f'в ответе API домашки нет ключа "{HOMEWORK_NAME_KEY}" '
         )
@@ -111,7 +121,7 @@ def send_error_message(bot):
     """
     global error_messages
     for key, item in error_messages.copy().items():
-        if bool(item.get("new")) and send_message(bot, item.get("message")):
+        if item.get("new") and send_message(bot, item.get("message")):
             error_messages[key] = {
                 'message': item.get("message"),
                 'new': False,
@@ -120,26 +130,31 @@ def send_error_message(bot):
 
 def main():
     """Основная логика работы бота."""
+    old_message: string = ''
+    missing_tokens = check_tokens()
+    if missing_tokens:
+        raise EnvironmentValueError(missing_tokens)
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
     timestamp = int(time.time()) - RETRY_PERIOD
-    check_tokens()
+
     while True:
         try:
             response = get_api_answer(timestamp)
-            if bool(response):
-                check_response(response)
-                homeworks = response.get(HOMEWORK_KEY)
-                timestamp = response.get(TIME_KEY)
-                if bool(homeworks):
-                    homework_status = parse_status(homeworks[0])
-                    if bool(homework_status):
-                        send_message(bot, homework_status)
-                else:
-                    logger.debug('нет новых статусов')
+            check_response(response)
+            homeworks = response[HOMEWORK_KEY]
+            timestamp = response[TIME_KEY]
+            if homeworks:
+                homework_status = parse_status(homeworks[0])
+                if homework_status != old_message:
+                    send_message(bot, homework_status)
+                    old_message = homework_status
+            else:
+                logger.debug('нет новых статусов')
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            logger.error(message)
+            logger.error(message, exc_info=True)
+
         finally:
             send_error_message(bot)
             time.sleep(RETRY_PERIOD)
