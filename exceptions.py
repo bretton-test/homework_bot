@@ -72,3 +72,38 @@ class BotHandler(StreamHandler):
                     'message': self.format(record),
                     'new': True,
                 }
+
+
+class RequestError(Exception):
+    """Исключение вызывается при ошибке получения Request.
+    Attributes:
+       endpoint_name -- адрес.
+       message -- сообщение об ошибке.
+    """
+
+    def __init__(
+        self,
+        endpoint_name,
+        message="Ошибка запроса к: ",
+    ):
+        self.endpoint_name = endpoint_name
+        self.message = message
+        super().__init__(self.message)
+
+    def __str__(self):
+        message = f'{self.message} {self. endpoint_name}'
+        return message
+
+
+class JsonError(Exception):
+    """Исключение вызывается при проверке JSON.
+    Attributes:
+       message -- сообщение об ошибке.
+    """
+
+    def __init__(
+        self,
+        message="Ошибка проверки JSON",
+    ):
+        self.message = message
+        super().__init__(self.message)

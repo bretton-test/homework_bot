@@ -1,6 +1,9 @@
 import logging
 import string
 import time
+from http import HTTPStatus
+from json import dumps
+from json.decoder import JSONDecodeError
 
 import requests
 import telegram
@@ -15,9 +18,17 @@ from constants import (
 )
 from constants import PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 from constants import TELEGRAM_RETRY_PERIOD as RETRY_PERIOD
-from constants import TIMEOUT, ENDPOINT, HEADERS
-from exceptions import EnvironmentValueError, HttpStatusError, BotHandler
+from constants import TIMEOUT, ENDPOINT
+from exceptions import (
+    EnvironmentValueError,
+    HttpStatusError,
+    BotHandler,
+    RequestError,
+    JsonError,
+)
 
+HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
+# иначе ругается pep8 на неиспользуемый PRACTICUM_TOKEN
 error_messages = {}
 
 logger = logging.getLogger(__name__)
@@ -31,17 +42,13 @@ logger.addHandler(handler)
 def check_tokens():
     """Check tokens for validity."""
     missing_tokens = []
-    for item in (
-        (PRACTICUM_TOKEN, 'PRACTICUM_TOKEN'),
-        (TELEGRAM_TOKEN, 'TELEGRAM_TOKEN'),
-        (TELEGRAM_CHAT_ID, 'TELEGRAM_CHAT_ID'),
-    ):
-        if not item[0]:
-            missing_tokens.append(item[1])
-    error_message = ", ".join(missing_tokens)
+    for item in ('PRACTICUM_TOKEN', 'TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID'):
+        if not globals()[item]:
+            missing_tokens.append(item)
+    error_message = ', '.join(missing_tokens)
     if error_message:
         logger.critical(
-            f'Отсутствует обязательная'
+            'Отсутствует обязательная'
             f' переменная окружения: {error_message}'
         )
     return error_message
@@ -66,15 +73,17 @@ def get_api_answer(timestamp):
             headers=HEADERS,
             params={'from_date': timestamp, 'timeout': TIMEOUT},
         )
-        # homework_statuses.raise_for_status() - но это не проходит тесты
-        if homework_statuses.status_code != 200:
-            raise HttpStatusError(ENDPOINT, homework_statuses.status_code)
-
-        return homework_statuses.json()
     except requests.exceptions.RequestException as error:
-        logger.error(error)
-    except ValueError as error:
-        logger.error(error)
+        raise RequestError(ENDPOINT) from error
+
+    if homework_statuses.status_code != HTTPStatus.OK:
+        raise HttpStatusError(ENDPOINT, homework_statuses.status_code)
+    # хотел проверить 'Content-Type', но тесты не знают такое
+    try:
+        dumps(homework_statuses.text)
+    except JSONDecodeError as error:
+        raise JsonError() from error
+    return homework_statuses.json()
 
 
 def check_response(response):
@@ -82,13 +91,13 @@ def check_response(response):
     error_message = 'API возвращает неверный тип данных'
     if not isinstance(response, dict):
         raise TypeError(f'{error_message}. {type(response)}: ожидаемый dict!')
+    # get убрать нельзя. тест не проходит
     homeworks = response.get(HOMEWORK_KEY)
     timestamp = response.get(TIME_KEY)
     if not isinstance(homeworks, list):
         raise TypeError(f'{error_message}. {type(homeworks)}: ожидаемый list!')
     if not isinstance(timestamp, int):
         raise TypeError(f'{error_message}. {type(timestamp)}: ожидаемый int!')
-    # хотел сделать в цикле. но pytest не пропустил
 
     for item in homeworks:
         for key in HOMEWORK_KEYS:
@@ -101,17 +110,17 @@ def check_response(response):
 
 def parse_status(homework):
     """Возвращает ответ из словаря домашки."""
-    status = homework.get(STATUS_KEY)
-    if not status:
-        raise ValueError('Api возвращает недокументированный статус')
-    verdict = HOMEWORK_VERDICTS.get(status)
-    if not verdict:
-        raise ValueError('Api возвращает недокументированный статус')
-    homework_name = homework.get(HOMEWORK_NAME_KEY)
-    if not homework_name:
-        raise ValueError(
-            f'в ответе API домашки нет ключа "{HOMEWORK_NAME_KEY}" '
-        )
+    error_message = 'Api возвращает недокументированный статус'
+    if STATUS_KEY not in homework:
+        raise KeyError(error_message)
+    status = homework[STATUS_KEY]
+    if status not in HOMEWORK_VERDICTS:
+        raise KeyError(error_message)
+    verdict = HOMEWORK_VERDICTS[status]
+    if HOMEWORK_NAME_KEY not in homework:
+        raise KeyError(error_message)
+    homework_name = homework[HOMEWORK_NAME_KEY]
+
     return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
@@ -121,11 +130,12 @@ def send_error_message(bot):
     """
     global error_messages
     for key, item in error_messages.copy().items():
-        if item.get("new") and send_message(bot, item.get("message")):
+        if item.get('new') and send_message(bot, item.get('message')):
             error_messages[key] = {
-                'message': item.get("message"),
+                'message': item.get('message'),
                 'new': False,
             }
+            # ""  вместо '' - привычка из 1с. даже не замечаю
 
 
 def main():
@@ -153,7 +163,7 @@ def main():
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            logger.error(message, exc_info=True)
+            logger.exception(message)
 
         finally:
             send_error_message(bot)
